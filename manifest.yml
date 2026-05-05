@@ -6,19 +6,18 @@ modules:
       resolver:
         function: resolver
       title: Status
-      config:
-        resource: macro-config
-        render: native
-        viewportSize: small
-        title: Status
   function:
     - key: resolver
       handler: index.handler
 resources:
   - key: main
     path: src/frontend/index.jsx
-  - key: macro-config
-    path: src/frontend/config.jsx
+permissions:
+  scopes:
+    # Granular page scopes required by the Confluence v2 page properties
+    # endpoints we use to persist this macro's status per page+macro instance.
+    - read:page:confluence
+    - write:page:confluence
 app:
   runtime:
     name: nodejs24.x
