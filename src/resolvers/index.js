@@ -1,5 +1,5 @@
 import Resolver from '@forge/resolver';
-import api, { route } from '@forge/api';
+import api, { authorize, route } from '@forge/api';
 
 const resolver = new Resolver();
 const PROPERTY_KEY_PREFIX = 'status-inline-v1';
@@ -22,6 +22,23 @@ const toStatusPayload = (value) => ({
   status: VALID_STATUSES.has(value?.status) ? value.status : DEFAULT_STATUS,
   statusChangedAt: value?.statusChangedAt || null,
 });
+
+// We keep the data calls on asApp for better UX (no repeated user consent
+// prompts in macro-heavy pages), but we still enforce end-user permissions
+// before each action so app-level credentials cannot bypass content access.
+const assertUserCanViewContent = async (contentId) => {
+  const canRead = await authorize().onConfluenceContent(contentId).canRead();
+  if (!canRead) {
+    throw new Error('You do not have permission to view this page status.');
+  }
+};
+
+const assertUserCanEditContent = async (contentId) => {
+  const canUpdate = await authorize().onConfluenceContent(contentId).canUpdate();
+  if (!canUpdate) {
+    throw new Error('You do not have permission to change this page status.');
+  }
+};
 
 // Look up an existing content property by key on a page using the v2 API.
 // v2 returns a list; we match the requested key client-side. Returns the
@@ -53,6 +70,8 @@ resolver.define('getStatus', async (req) => {
     throw new Error('Missing localId for status lookup');
   }
 
+  await assertUserCanViewContent(contentId);
+
   const property = await findProperty(contentId, getPropertyKey(localId));
 
   if (!property) {
@@ -78,6 +97,8 @@ resolver.define('setStatus', async (req) => {
   if (!VALID_STATUSES.has(status)) {
     throw new Error(`Unsupported status value: ${status}`);
   }
+
+  await assertUserCanEditContent(contentId);
 
   const key = getPropertyKey(localId);
   const statusChangedAt = new Date().toISOString();
