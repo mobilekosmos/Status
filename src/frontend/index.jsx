@@ -5,8 +5,8 @@ import ForgeReconciler, {
   ErrorMessage,
   Lozenge,
   Popup,
-  Stack,
   Spinner,
+  Stack,
   Text,
   Tooltip,
 } from '@forge/react';
@@ -166,10 +166,9 @@ const App = () => {
 
   if (isLoading) {
     return (
-      <Stack space="space.100">
-        <Spinner size="small" />
-        <Text>Loading status...</Text>
-      </Stack>
+      <Button appearance="subtle" spacing="none" isDisabled>
+        <Lozenge appearance="new">LOADING STATUS...</Lozenge>
+      </Button>
     );
   }
 
@@ -178,15 +177,16 @@ const App = () => {
   // is keyboard-accessible and gets the proper aria/role plumbing from
   // @forge/react Popup, while still looking like a plain badge.
   const triggerLabel = getTooltipContent(selectedStatus, statusChangedAt);
+  const tooltipLabel = error ? `${triggerLabel} | ${error}` : triggerLabel;
 
   return (
-    <Stack space="space.100">
+    <>
       <Popup
         isOpen={isOpen}
         onClose={() => setIsOpen(false)}
         placement="bottom-start"
         trigger={(triggerProps) => (
-          <Tooltip content={triggerLabel} position="mouse">
+          <Tooltip content={tooltipLabel} position="mouse">
             <Button
               {...triggerProps}
               appearance="subtle"
@@ -226,9 +226,8 @@ const App = () => {
         )}
       />
 
-      {isSaving && <Text>Saving status...</Text>}
-      {error && <ErrorMessage>{error}</ErrorMessage>}
-    </Stack>
+      {isSaving && <Text>Saving...</Text>}
+    </>
   );
 };
 

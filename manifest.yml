@@ -3,6 +3,7 @@ modules:
     - key: status
       resource: main
       render: native
+      layout: inline
       resolver:
         function: resolver
       title: Status
