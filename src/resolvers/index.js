@@ -97,9 +97,48 @@ resolver.define('getStatus', async (req) => {
     errorMessage: 'You do not have permission to view this page status.',
   });
 
-  const property = await findProperty(contentId, getPropertyKey(localId));
+  const key = getPropertyKey(localId);
+  const property = await findProperty(contentId, key);
 
   if (!property) {
+    const statusChangedAt = new Date().toISOString();
+    const initialValue = { status: DEFAULT_STATUS, statusChangedAt };
+
+    try {
+      await checkUserContentPermission({
+        contentId,
+        accountId,
+        operation: 'update',
+        errorMessage: 'You do not have permission to initialize this page status.',
+      });
+
+      const createResponse = await api
+        .asApp()
+        .requestConfluence(route`/wiki/api/v2/pages/${contentId}/properties`, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ key, value: initialValue }),
+        });
+
+      if (createResponse.ok) {
+        return toStatusPayload(initialValue);
+      }
+
+      // A concurrent request may have already created the property.
+      if (createResponse.status === 409) {
+        const concurrentProperty = await findProperty(contentId, key);
+        if (concurrentProperty) {
+          return toStatusPayload(concurrentProperty.value);
+        }
+      }
+    } catch (error) {
+      // If initialization fails (for example, read-only users), fall back to
+      // the default payload so viewing still works.
+    }
+
     return toStatusPayload();
   }
 
