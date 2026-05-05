@@ -1,5 +1,5 @@
 import Resolver from '@forge/resolver';
-import api, { authorize, route } from '@forge/api';
+import api, { route } from '@forge/api';
 
 const resolver = new Resolver();
 const PROPERTY_KEY_PREFIX = 'status-inline-v1';
@@ -23,20 +23,39 @@ const toStatusPayload = (value) => ({
   statusChangedAt: value?.statusChangedAt || null,
 });
 
-// We keep the data calls on asApp for better UX (no repeated user consent
-// prompts in macro-heavy pages), but we still enforce end-user permissions
-// before each action so app-level credentials cannot bypass content access.
-const assertUserCanViewContent = async (contentId) => {
-  const canRead = await authorize().onConfluenceContent(contentId).canRead();
-  if (!canRead) {
-    throw new Error('You do not have permission to view this page status.');
+// We keep all data calls on asApp for better UX (no repeated user-consent
+// prompts), then explicitly verify the acting user's permissions using the
+// product permission API before reads/writes.
+const checkUserContentPermission = async ({ contentId, accountId, operation, errorMessage }) => {
+  if (!accountId) {
+    throw new Error('Missing user accountId in resolver context.');
   }
-};
 
-const assertUserCanEditContent = async (contentId) => {
-  const canUpdate = await authorize().onConfluenceContent(contentId).canUpdate();
-  if (!canUpdate) {
-    throw new Error('You do not have permission to change this page status.');
+  const response = await api
+    .asApp()
+    .requestConfluence(route`/wiki/rest/api/content/${contentId}/permission/check`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        subject: {
+          type: 'user',
+          identifier: accountId,
+        },
+        operation,
+      }),
+    });
+
+  if (!response.ok) {
+    const details = await response.text();
+    throw new Error(`Failed to verify content permission: ${response.status} ${details}`);
+  }
+
+  const result = await response.json();
+  if (!result?.hasPermission) {
+    throw new Error(errorMessage);
   }
 };
 
@@ -61,6 +80,7 @@ const findProperty = async (contentId, key) => {
 resolver.define('getStatus', async (req) => {
   const contentId = req.payload?.contentId;
   const localId = req.payload?.localId;
+  const accountId = req.context?.accountId;
 
   if (!contentId) {
     throw new Error('Missing contentId for status lookup');
@@ -70,7 +90,12 @@ resolver.define('getStatus', async (req) => {
     throw new Error('Missing localId for status lookup');
   }
 
-  await assertUserCanViewContent(contentId);
+  await checkUserContentPermission({
+    contentId,
+    accountId,
+    operation: 'read',
+    errorMessage: 'You do not have permission to view this page status.',
+  });
 
   const property = await findProperty(contentId, getPropertyKey(localId));
 
@@ -85,6 +110,7 @@ resolver.define('setStatus', async (req) => {
   const contentId = req.payload?.contentId;
   const localId = req.payload?.localId;
   const status = req.payload?.status;
+  const accountId = req.context?.accountId;
 
   if (!contentId) {
     throw new Error('Missing contentId for status update');
@@ -98,7 +124,12 @@ resolver.define('setStatus', async (req) => {
     throw new Error(`Unsupported status value: ${status}`);
   }
 
-  await assertUserCanEditContent(contentId);
+  await checkUserContentPermission({
+    contentId,
+    accountId,
+    operation: 'update',
+    errorMessage: 'You do not have permission to change this page status.',
+  });
 
   const key = getPropertyKey(localId);
   const statusChangedAt = new Date().toISOString();

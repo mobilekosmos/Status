@@ -19,6 +19,8 @@ permissions:
     # endpoints we use to persist this macro's status per page+macro instance.
     - read:page:confluence
     - write:page:confluence
+    # Required for POST /wiki/rest/api/content/{id}/permission/check.
+    - read:content.permission:confluence
 app:
   runtime:
     name: nodejs24.x
