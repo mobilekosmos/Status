@@ -1,0 +1,27 @@
+modules:
+  macro:
+    - key: status
+      resource: main
+      render: native
+      resolver:
+        function: resolver
+      title: Status
+      config:
+        resource: macro-config
+        render: native
+        viewportSize: small
+        title: Status
+  function:
+    - key: resolver
+      handler: index.handler
+resources:
+  - key: main
+    path: src/frontend/index.jsx
+  - key: macro-config
+    path: src/frontend/config.jsx
+app:
+  runtime:
+    name: nodejs24.x
+    memoryMB: 256
+    architecture: arm64
+  id: ari:cloud:ecosystem::app/0110dab8-0a9e-43a9-ba8b-84ec0c93fc0a
