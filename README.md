@@ -1,6 +1,6 @@
 # Status Macro (Forge, Confluence)
 
-This project is an Atlassian Forge UI Kit Confluence macro that stores and displays a page status as a lozenge.
+This project is an Atlassian Forge UI Kit Confluence macro that stores and displays a status as a lozenge on Confluence pages and blog posts.
 
 Users click the lozenge to open a compact picker and select one of these states:
 
@@ -9,15 +9,18 @@ Users click the lozenge to open a compact picker and select one of these states:
 - NOT ACCEPTED
 - ACCEPTED FOR RELEASE
 
-The selected value is saved as a Confluence page property, scoped per macro instance.
+The selected value is saved as a content property of the page or blog post, one per macro instance.
+The tooltip shows since when the status applies. If the status can't be loaded, the macro shows STATUS UNAVAILABLE with the reason in its tooltip; clicking it tries again.
 
 ## What Is Implemented
 
 - UI Kit frontend macro in [src/frontend/index.jsx](src/frontend/index.jsx)
 - Backend resolver in [src/resolvers/index.js](src/resolvers/index.js)
 - Manifest and scopes in [manifest.yml](manifest.yml)
-- Uses Confluence v2 page properties endpoints
-- Uses app identity (`asApp`) to avoid per-user consent prompts
+- Uses the Confluence v2 content properties endpoints for pages and blog posts
+- Uses app identity (`asApp`) to avoid per-user consent prompts, and checks the current user's own page permissions before every read and write
+- Takes the page and macro IDs from the Forge resolver context instead of the browser's `invoke()` payload
+- Unit tests for the resolver and the macro UI in [test/](test/)
 
 ## Prerequisites
 
@@ -32,21 +35,24 @@ Reference: [Set up Forge](https://developer.atlassian.com/platform/forge/set-up-
 - [manifest.yml](manifest.yml): Forge modules, resources, runtime, scopes
 - [src/frontend/index.jsx](src/frontend/index.jsx): Macro UI and interactions
 - [src/resolvers/index.js](src/resolvers/index.js): Status read/write logic
+- [test/](test/): Vitest unit tests (Confluence's REST API and UI Kit are mocked)
+- [eslint.config.mjs](eslint.config.mjs): Lint rules
 
 ## Permissions (Scopes)
 
 Current scopes in [manifest.yml](manifest.yml):
 
-- `read:page:confluence`
-- `write:page:confluence`
-
-These are required by the Confluence v2 page properties endpoints used by this app.
+- `read:page:confluence` and `write:page:confluence`: read and save the status through the Confluence v2 content properties endpoints for pages and blog posts.
+- `read:content.permission:confluence`: check whether the current user may view or edit the page. The app calls Confluence with its own identity, so it must check the user's permissions itself.
 
 ## Development Workflow
 
 Run from the app root directory:
 
 ```bash
+npm ci
+npm run lint
+npm test
 forge lint
 forge deploy --non-interactive -e development
 forge install --non-interactive --site <your-site>.atlassian.net --product confluence --environment development
@@ -95,5 +101,5 @@ https://developer.atlassian.com/console/myapps/0110dab8-0a9e-43a9-ba8b-84ec0c93f
 
 - Development and production are separate Forge environments.
 - Existing macro instances inserted from one environment do not automatically migrate state to another environment.
-- Always run `forge lint` before deploy.
+- Always run `npm run lint`, `npm test` and `forge lint` before deploying.
 

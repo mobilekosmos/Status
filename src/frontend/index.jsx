@@ -2,15 +2,13 @@ import React, { useEffect, useState } from 'react';
 import ForgeReconciler, {
   Box,
   Button,
-  ErrorMessage,
   Lozenge,
   Popup,
-  Spinner,
   Stack,
   Text,
   Tooltip,
 } from '@forge/react';
-import { invoke, view } from '@forge/bridge';
+import { invoke } from '@forge/bridge';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -72,12 +70,27 @@ const getTooltipContent = (status, changedAt) => {
   return `${status.label} since ${formatDate(changedAt)} — ${daysInState} ${dayText} in this state`;
 };
 
+// @forge/bridge does not always reject with an Error instance (see the
+// consent note in loadStatus below), so never assume `.message` exists.
+// Its "Expected reject to be called with Error" diagnostic means nothing to
+// readers, so the fallback text is shown instead.
+const getErrorMessage = (error, fallback) => {
+  const message = typeof error?.message === 'string' ? error.message : '';
+
+  if (!message || message.includes('Expected reject to be called with Error')) {
+    return fallback;
+  }
+
+  return message;
+};
+
 const App = () => {
-  const [contentId, setContentId] = useState(null);
-  const [localId, setLocalId] = useState(null);
   const [selectedStatusKey, setSelectedStatusKey] = useState('readyForAcceptanceTest');
   const [statusChangedAt, setStatusChangedAt] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  // Counts load attempts; bumping it makes the effect below load again.
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [error, setError] = useState('');
@@ -85,51 +98,39 @@ const App = () => {
   useEffect(() => {
     const loadStatus = async () => {
       try {
-        const context = await view.getContext();
-        const pageId =
-          context?.extension?.content?.id ||
-          context?.content?.id ||
-          context?.extension?.context?.contentId;
-        const macroLocalId = context?.localId;
-
-        if (!pageId) {
-          throw new Error('Unable to resolve Confluence page ID from macro context.');
-        }
-
-        if (!macroLocalId) {
-          throw new Error('Unable to resolve macro instance ID from Forge context.');
-        }
-
-        setContentId(pageId);
-        setLocalId(macroLocalId);
-
-        const savedState = await invoke('getStatus', {
-          contentId: pageId,
-          localId: macroLocalId,
-        });
+        // The resolver reads the page and macro IDs from the Forge context
+        // itself, so there is nothing to send.
+        const savedState = await invoke('getStatus');
         setSelectedStatusKey(savedState.status || 'readyForAcceptanceTest');
         setStatusChangedAt(savedState.statusChangedAt || null);
+        setLoadFailed(false);
+        setError('');
       } catch (loadError) {
+        // Don't fall back to the default status here: readers would take it
+        // for the saved one, and editors could overwrite a status they never
+        // saw. The macro shows "STATUS UNAVAILABLE" instead.
+        //
         // When the user has not yet clicked "Allow access" on the Forge
         // consent banner, the resolver promise rejects without a proper
-        // Error instance. @forge/bridge surfaces that as a confusing
-        // "Expected reject to be called with Error" diagnostic. We swallow
-        // those pre-consent rejections so only real failures are shown.
-        const message =
-          loadError && typeof loadError.message === 'string' ? loadError.message : '';
-        if (message && !message.includes('Expected reject to be called with Error')) {
-          setError(message);
-        }
+        // Error instance; getErrorMessage hides the confusing diagnostic
+        // @forge/bridge creates for that.
+        setLoadFailed(true);
+        setError(getErrorMessage(loadError, 'Could not load the status.'));
       } finally {
         setIsLoading(false);
       }
     };
 
     loadStatus();
-  }, []);
+  }, [loadAttempt]);
+
+  const retryLoading = () => {
+    setIsLoading(true);
+    setLoadAttempt((attempt) => attempt + 1);
+  };
 
   const onStatusChange = async (nextStatus) => {
-    if (!nextStatus || !contentId || !localId || nextStatus === selectedStatusKey || isSaving) {
+    if (!nextStatus || nextStatus === selectedStatusKey || isSaving) {
       setIsOpen(false);
       return;
     }
@@ -145,18 +146,14 @@ const App = () => {
     setIsOpen(false);
 
     try {
-      const updatedState = await invoke('setStatus', {
-        contentId,
-        localId,
-        status: nextStatus,
-      });
+      const updatedState = await invoke('setStatus', { status: nextStatus });
 
       setSelectedStatusKey(updatedState.status || nextStatus);
       setStatusChangedAt(updatedState.statusChangedAt || null);
     } catch (saveError) {
       setSelectedStatusKey(previousStatus);
       setStatusChangedAt(previousChangedAt);
-      setError(saveError.message || 'Failed to save status.');
+      setError(getErrorMessage(saveError, 'Could not save the status.'));
     } finally {
       setIsSaving(false);
     }
@@ -172,8 +169,23 @@ const App = () => {
     );
   }
 
-  // The lozenge itself is the control: clicking it opens a popup containing
-  // the status Select. We wrap the lozenge in a subtle Button so the trigger
+  if (loadFailed) {
+    // No status picker until the saved status is known. The lozenge is still
+    // a button, so keyboard and screen reader users can reach the reason in
+    // the tooltip, and clicking it loads the status again.
+    return (
+      <Tooltip content={`${error} Click to try again.`} position="mouse">
+        <Button appearance="subtle" spacing="none" onClick={retryLoading}>
+          <Lozenge appearance="default" isBold>
+            STATUS UNAVAILABLE
+          </Lozenge>
+        </Button>
+      </Tooltip>
+    );
+  }
+
+  // The lozenge itself is the control: clicking it opens a popup with one
+  // button per status. We wrap the lozenge in a subtle Button so the trigger
   // is keyboard-accessible and gets the proper aria/role plumbing from
   // @forge/react Popup, while still looking like a plain badge.
   const triggerLabel = getTooltipContent(selectedStatus, statusChangedAt);
@@ -185,13 +197,17 @@ const App = () => {
         isOpen={isOpen}
         onClose={() => setIsOpen(false)}
         placement="bottom-start"
+        // Screen readers announce the popup by this name. The UI Kit docs
+        // strongly recommend a label, and "dialog" for a popup like this one.
+        label="Change status"
+        role="dialog"
         trigger={(triggerProps) => (
           <Tooltip content={tooltipLabel} position="mouse">
             <Button
               {...triggerProps}
               appearance="subtle"
               spacing="none"
-              isDisabled={isSaving || !contentId || !localId}
+              isDisabled={isSaving}
               onClick={() => setIsOpen((open) => !open)}
               aria-label={`Status: ${selectedStatus.label}. Click to change.`}
             >
