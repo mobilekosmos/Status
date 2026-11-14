@@ -1,8 +1,7 @@
 {
-  "name": "confluence-macro-ui-kit",
+  "name": "status-macro",
   "version": "1.1.39",
-  "main": "index.js",
-  "license": "MIT",
+  "license": "SEE LICENSE IN COPYRIGHT",
   "private": true,
   "scripts": {
     "lint": "eslint .",
