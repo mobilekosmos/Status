@@ -191,13 +191,20 @@ export const setStatus = async (req) => {
   });
 
   const key = getPropertyKey(localId);
+  const existing = await findProperty(routes, contentId, key);
+
+  // Picking the status the macro already has must not reset its "since"
+  // date. This happens when the page was opened before someone else changed
+  // the status.
+  if (existing?.value?.status === status && existing.value.statusChangedAt) {
+    return toStatusPayload(existing.value);
+  }
+
   const statusChangedAt = new Date().toISOString();
   const value = { status, statusChangedAt };
 
   // v2 distinguishes create vs update: POST when no property exists, PUT
   // (with the next version number) when updating an existing one.
-  const existing = await findProperty(routes, contentId, key);
-
   let response;
   if (existing) {
     const nextVersion = (existing.version?.number || 1) + 1;

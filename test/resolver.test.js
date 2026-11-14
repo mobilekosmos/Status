@@ -236,6 +236,16 @@ describe('setStatus', () => {
     });
   });
 
+  it('keeps the "since" date when the chosen status is already saved', async () => {
+    // Someone else set "not accepted" on 1 November; this user's page was
+    // opened earlier and still showed the old status, so they pick it again.
+    const saved = { status: 'notAccepted', statusChangedAt: '2026-11-01T08:00:00.000Z' };
+    fakeConfluence({ property: savedProperty(saved) });
+
+    await expect(setStatus(request({ status: 'notAccepted' }))).resolves.toEqual(saved);
+    expect(writeRequests()).toHaveLength(0);
+  });
+
   it('creates the property when the macro has none yet', async () => {
     fakeConfluence({ property: null });
 
