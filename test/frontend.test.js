@@ -30,8 +30,8 @@ vi.mock('@forge/react', async () => {
     Text: element('Text'),
     Tooltip: element('Tooltip'),
     // Render the trigger, and the content only while the popup is open.
-    Popup: ({ isOpen, trigger, content }) =>
-      createElement('Popup', { isOpen }, trigger({}), isOpen ? content() : null),
+    Popup: ({ isOpen, label, role, trigger, content }) =>
+      createElement('Popup', { isOpen, label, role }, trigger({}), isOpen ? content() : null),
   };
 });
 
@@ -84,6 +84,15 @@ describe('Status macro', () => {
     const root = await renderMacro();
 
     expect(tooltip(root)).toBe('Could not load the status.');
+  });
+
+  it('gives the status picker an accessible name', async () => {
+    bridge.invoke.mockResolvedValue(saved);
+
+    const root = await renderMacro();
+
+    const popup = root.find((node) => node.type === 'Popup');
+    expect(popup.props).toMatchObject({ label: 'Change status', role: 'dialog' });
   });
 
   it('goes back to the previous status when saving fails, even without an Error object', async () => {

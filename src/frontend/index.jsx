@@ -172,8 +172,8 @@ const App = () => {
     );
   }
 
-  // The lozenge itself is the control: clicking it opens a popup containing
-  // the status Select. We wrap the lozenge in a subtle Button so the trigger
+  // The lozenge itself is the control: clicking it opens a popup with one
+  // button per status. We wrap the lozenge in a subtle Button so the trigger
   // is keyboard-accessible and gets the proper aria/role plumbing from
   // @forge/react Popup, while still looking like a plain badge.
   const triggerLabel = getTooltipContent(selectedStatus, statusChangedAt);
@@ -185,6 +185,10 @@ const App = () => {
         isOpen={isOpen}
         onClose={() => setIsOpen(false)}
         placement="bottom-start"
+        // Screen readers announce the popup by this name. The UI Kit docs
+        // strongly recommend a label, and "dialog" for a popup like this one.
+        label="Change status"
+        role="dialog"
         trigger={(triggerProps) => (
           <Tooltip content={tooltipLabel} position="mouse">
             <Button
