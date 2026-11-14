@@ -117,6 +117,42 @@ describe('page and macro IDs', () => {
   });
 });
 
+describe('content types', () => {
+  it('uses the blog post endpoints when the macro is on a blog post', async () => {
+    fakeConfluence({
+      property: savedProperty({ status: 'notAccepted', statusChangedAt: '2026-11-01T08:00:00.000Z' }),
+    });
+    const onBlogPost = { extension: { type: 'macro', content: { id: PAGE_ID, type: 'blogpost' } } };
+
+    await getStatus(request({}, onBlogPost));
+    await setStatus(request({ status: 'acceptedForRelease' }, onBlogPost));
+
+    expect(sentRequests()).toEqual([
+      `POST /wiki/rest/api/content/${PAGE_ID}/permission/check`,
+      `GET /wiki/api/v2/blogposts/${PAGE_ID}/properties?key=${PROPERTY_KEY}`,
+      `POST /wiki/rest/api/content/${PAGE_ID}/permission/check`,
+      `GET /wiki/api/v2/blogposts/${PAGE_ID}/properties?key=${PROPERTY_KEY}`,
+      `PUT /wiki/api/v2/blogposts/${PAGE_ID}/properties/777`,
+    ]);
+  });
+
+  it('treats a missing content type as a page, like before', async () => {
+    fakeConfluence({ property: null, canUpdate: false });
+
+    await getStatus(request({}, { extension: { type: 'macro', content: { id: PAGE_ID } } }));
+
+    expect(sentRequests()).toContain(`GET /wiki/api/v2/pages/${PAGE_ID}/properties?key=${PROPERTY_KEY}`);
+  });
+
+  it('refuses places without content properties, such as a space', async () => {
+    fakeConfluence();
+    const inSpace = { extension: { type: 'macro', content: { id: '42', type: 'space' } } };
+
+    await expect(getStatus(request({}, inSpace))).rejects.toThrow(/only works on pages and blog posts/);
+    expect(requestConfluence).not.toHaveBeenCalled();
+  });
+});
+
 describe('getStatus', () => {
   it('returns the status saved for this macro instance', async () => {
     fakeConfluence({

@@ -23,19 +23,45 @@ const toStatusPayload = (value) => ({
   statusChangedAt: value?.statusChangedAt || null,
 });
 
-// Which page and which macro instance a call is about. Forge fills
-// req.context on its servers, so unlike the invoke() payload it cannot be
-// changed in the user's browser and is safe to base permission checks on:
+// Confluence keeps page and blog post properties under different v2 paths.
+// Each route is spelled out in full because `route` must see the literal
+// path to escape the IDs safely.
+const PROPERTY_ROUTES = {
+  page: {
+    list: (contentId, key) => route`/wiki/api/v2/pages/${contentId}/properties?key=${key}`,
+    create: (contentId) => route`/wiki/api/v2/pages/${contentId}/properties`,
+    update: (contentId, propertyId) =>
+      route`/wiki/api/v2/pages/${contentId}/properties/${propertyId}`,
+  },
+  blogpost: {
+    list: (contentId, key) => route`/wiki/api/v2/blogposts/${contentId}/properties?key=${key}`,
+    create: (contentId) => route`/wiki/api/v2/blogposts/${contentId}/properties`,
+    update: (contentId, propertyId) =>
+      route`/wiki/api/v2/blogposts/${contentId}/properties/${propertyId}`,
+  },
+};
+
+// Which page or blog post and which macro instance a call is about. The IDs
+// come from the context Forge attaches to the call, not from the invoke()
+// payload, which the user can change in the browser. Atlassian's docs say not
+// every context field is guaranteed to be secure, so the permission checks
+// below are still what authorize each call:
 // https://developer.atlassian.com/platform/forge/app-context-security/
 const getMacroContext = (context) => {
-  const contentId = context?.extension?.content?.id;
+  const content = context?.extension?.content;
   const localId = context?.localId;
 
-  if (!contentId || !localId) {
+  if (!content?.id || !localId) {
     throw new Error('Missing page or macro ID in the Forge context.');
   }
 
-  return { contentId, localId };
+  // If Forge ever leaves out the type, keep the old behaviour (page).
+  const routes = PROPERTY_ROUTES[content.type ?? 'page'];
+  if (!routes) {
+    throw new Error('The Status macro only works on pages and blog posts.');
+  }
+
+  return { contentId: content.id, localId, routes };
 };
 
 // We keep all data calls on asApp for better UX (no repeated user-consent
@@ -74,13 +100,11 @@ const checkUserContentPermission = async ({ contentId, accountId, operation, err
   }
 };
 
-// Look up an existing content property by key on a page using the v2 API.
+// Look up an existing content property by key using the v2 API.
 // v2 returns a list; we match the requested key client-side. Returns the
 // property object (with id and version) or null when no property exists yet.
-const findProperty = async (contentId, key) => {
-  const response = await api
-    .asApp()
-    .requestConfluence(route`/wiki/api/v2/pages/${contentId}/properties?key=${key}`);
+const findProperty = async (routes, contentId, key) => {
+  const response = await api.asApp().requestConfluence(routes.list(contentId, key));
 
   if (!response.ok) {
     const details = await response.text();
@@ -94,7 +118,7 @@ const findProperty = async (contentId, key) => {
 
 // The handlers are exported so the unit tests can call them directly.
 export const getStatus = async (req) => {
-  const { contentId, localId } = getMacroContext(req.context);
+  const { contentId, localId, routes } = getMacroContext(req.context);
   const accountId = req.context?.accountId;
 
   await checkUserContentPermission({
@@ -105,7 +129,7 @@ export const getStatus = async (req) => {
   });
 
   const key = getPropertyKey(localId);
-  const property = await findProperty(contentId, key);
+  const property = await findProperty(routes, contentId, key);
 
   if (!property) {
     const statusChangedAt = new Date().toISOString();
@@ -119,16 +143,14 @@ export const getStatus = async (req) => {
         errorMessage: 'You do not have permission to initialize this page status.',
       });
 
-      const createResponse = await api
-        .asApp()
-        .requestConfluence(route`/wiki/api/v2/pages/${contentId}/properties`, {
-          method: 'POST',
-          headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ key, value: initialValue }),
-        });
+      const createResponse = await api.asApp().requestConfluence(routes.create(contentId), {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ key, value: initialValue }),
+      });
 
       if (createResponse.ok) {
         return toStatusPayload(initialValue);
@@ -136,7 +158,7 @@ export const getStatus = async (req) => {
 
       // A concurrent request may have already created the property.
       if (createResponse.status === 409) {
-        const concurrentProperty = await findProperty(contentId, key);
+        const concurrentProperty = await findProperty(routes, contentId, key);
         if (concurrentProperty) {
           return toStatusPayload(concurrentProperty.value);
         }
@@ -153,7 +175,7 @@ export const getStatus = async (req) => {
 };
 
 export const setStatus = async (req) => {
-  const { contentId, localId } = getMacroContext(req.context);
+  const { contentId, localId, routes } = getMacroContext(req.context);
   const status = req.payload?.status;
   const accountId = req.context?.accountId;
 
@@ -174,36 +196,32 @@ export const setStatus = async (req) => {
 
   // v2 distinguishes create vs update: POST when no property exists, PUT
   // (with the next version number) when updating an existing one.
-  const existing = await findProperty(contentId, key);
+  const existing = await findProperty(routes, contentId, key);
 
   let response;
   if (existing) {
     const nextVersion = (existing.version?.number || 1) + 1;
-    response = await api
-      .asApp()
-      .requestConfluence(route`/wiki/api/v2/pages/${contentId}/properties/${existing.id}`, {
-        method: 'PUT',
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          key,
-          value,
-          version: { number: nextVersion },
-        }),
-      });
+    response = await api.asApp().requestConfluence(routes.update(contentId, existing.id), {
+      method: 'PUT',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        key,
+        value,
+        version: { number: nextVersion },
+      }),
+    });
   } else {
-    response = await api
-      .asApp()
-      .requestConfluence(route`/wiki/api/v2/pages/${contentId}/properties`, {
-        method: 'POST',
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ key, value }),
-      });
+    response = await api.asApp().requestConfluence(routes.create(contentId), {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ key, value }),
+    });
   }
 
   if (!response.ok) {
