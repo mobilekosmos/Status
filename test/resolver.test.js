@@ -258,6 +258,39 @@ describe('setStatus', () => {
     expect(writeRequests()).toHaveLength(0);
   });
 
+  // Two editors pick a status at the same moment: both read version 3, the
+  // other one's write lands first, so Confluence refuses this write.
+  const collidingSave = (theirValue) => {
+    let lookups = 0;
+    fakeConfluence({
+      property: savedProperty({ status: 'readyForAcceptanceTest', statusChangedAt: '2026-11-01T08:00:00.000Z' }, 3),
+      respond: (method, path) => {
+        if (method === 'PUT') {
+          return jsonResponse(409, { message: 'Version conflict' });
+        }
+        if (method === 'GET' && path.includes('/properties?key=') && ++lookups > 1) {
+          return jsonResponse(200, { results: [savedProperty(theirValue, 4)] });
+        }
+        return undefined;
+      },
+    });
+  };
+
+  it('succeeds when a colliding save chose the same status', async () => {
+    const theirs = { status: 'notAccepted', statusChangedAt: '2026-11-14T09:59:59.000Z' };
+    collidingSave(theirs);
+
+    await expect(setStatus(request({ status: 'notAccepted' }))).resolves.toEqual(theirs);
+  });
+
+  it('says so when a colliding save chose a different status', async () => {
+    collidingSave({ status: 'inAcceptanceTest', statusChangedAt: '2026-11-14T09:59:59.000Z' });
+
+    await expect(setStatus(request({ status: 'notAccepted' }))).rejects.toThrow(
+      'Someone else just changed the status. Reload the page to see it.',
+    );
+  });
+
   it('creates the property when the macro has none yet', async () => {
     fakeConfluence({ property: null });
 

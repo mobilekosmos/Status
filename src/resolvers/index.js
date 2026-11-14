@@ -249,6 +249,24 @@ export const setStatus = async (req) => {
   }
 
   if (!response.ok) {
+    // Confluence refuses the write when someone else saved between our
+    // lookup and our write, because our version number is then out of date.
+    // Look again to tell that case apart from other failures.
+    const current = await findProperty(routes, contentId, key, 'Could not save the status.').catch(
+      () => null,
+    );
+
+    // They chose the same status: that is what this user wanted, too.
+    if (current?.value?.status === status && current.value.statusChangedAt) {
+      return toStatusPayload(current.value);
+    }
+
+    // They chose a different one: say so instead of a vague failure.
+    if (current && current.version?.number !== existing?.version?.number) {
+      await logFailedResponse(response, 'Could not save the status.');
+      throw new Error('Someone else just changed the status. Reload the page to see it.');
+    }
+
     throw await requestFailed(response, 'Could not save the status.');
   }
 
