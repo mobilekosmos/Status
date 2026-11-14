@@ -23,6 +23,21 @@ const toStatusPayload = (value) => ({
   statusChangedAt: value?.statusChangedAt || null,
 });
 
+// Which page and which macro instance a call is about. Forge fills
+// req.context on its servers, so unlike the invoke() payload it cannot be
+// changed in the user's browser and is safe to base permission checks on:
+// https://developer.atlassian.com/platform/forge/app-context-security/
+const getMacroContext = (context) => {
+  const contentId = context?.extension?.content?.id;
+  const localId = context?.localId;
+
+  if (!contentId || !localId) {
+    throw new Error('Missing page or macro ID in the Forge context.');
+  }
+
+  return { contentId, localId };
+};
+
 // We keep all data calls on asApp for better UX (no repeated user-consent
 // prompts), then explicitly verify the acting user's permissions using the
 // product permission API before reads/writes.
@@ -79,17 +94,8 @@ const findProperty = async (contentId, key) => {
 
 // The handlers are exported so the unit tests can call them directly.
 export const getStatus = async (req) => {
-  const contentId = req.payload?.contentId;
-  const localId = req.payload?.localId;
+  const { contentId, localId } = getMacroContext(req.context);
   const accountId = req.context?.accountId;
-
-  if (!contentId) {
-    throw new Error('Missing contentId for status lookup');
-  }
-
-  if (!localId) {
-    throw new Error('Missing localId for status lookup');
-  }
 
   await checkUserContentPermission({
     contentId,
@@ -147,18 +153,9 @@ export const getStatus = async (req) => {
 };
 
 export const setStatus = async (req) => {
-  const contentId = req.payload?.contentId;
-  const localId = req.payload?.localId;
+  const { contentId, localId } = getMacroContext(req.context);
   const status = req.payload?.status;
   const accountId = req.context?.accountId;
-
-  if (!contentId) {
-    throw new Error('Missing contentId for status update');
-  }
-
-  if (!localId) {
-    throw new Error('Missing localId for status update');
-  }
 
   if (!VALID_STATUSES.has(status)) {
     throw new Error(`Unsupported status value: ${status}`);

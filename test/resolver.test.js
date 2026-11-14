@@ -65,9 +65,16 @@ const savedProperty = (value, versionNumber = 3) => ({
   version: { number: versionNumber },
 });
 
-const request = (payload = {}) => ({
-  payload: { contentId: PAGE_ID, localId: LOCAL_ID, ...payload },
-  context: { accountId: 'user-1' },
+// What Forge passes to a resolver function: the payload sent by the browser
+// and the context Forge adds on its servers for the macro on a page.
+const request = (payload = {}, context = {}) => ({
+  payload,
+  context: {
+    accountId: 'user-1',
+    localId: LOCAL_ID,
+    extension: { type: 'macro', content: { id: PAGE_ID, type: 'page' } },
+    ...context,
+  },
 });
 
 beforeEach(() => {
@@ -78,6 +85,36 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe('page and macro IDs', () => {
+  it('come from the Forge context, never from the payload', async () => {
+    fakeConfluence({
+      property: savedProperty({ status: 'notAccepted', statusChangedAt: '2026-11-01T08:00:00.000Z' }),
+    });
+    // A user could send any IDs from the browser console.
+    const forged = { contentId: '666', localId: 'forged' };
+
+    await getStatus(request(forged));
+    await setStatus(request({ ...forged, status: 'inAcceptanceTest' }));
+
+    const sent = sentRequests();
+    expect(sent.every((line) => line.includes(PAGE_ID))).toBe(true);
+    expect(sent.join('\n')).not.toMatch(/666|Zm9yZ2Vk/); // Zm9yZ2Vk = base64url('forged')
+    expect(sent).toContain(`GET /wiki/api/v2/pages/${PAGE_ID}/properties?key=${PROPERTY_KEY}`);
+  });
+
+  it('are required before anything is sent to Confluence', async () => {
+    fakeConfluence();
+
+    await expect(getStatus(request({}, { extension: { type: 'macro' } }))).rejects.toThrow(
+      /Missing page or macro ID/,
+    );
+    await expect(setStatus(request({ status: 'notAccepted' }, { localId: undefined }))).rejects.toThrow(
+      /Missing page or macro ID/,
+    );
+    expect(requestConfluence).not.toHaveBeenCalled();
+  });
 });
 
 describe('getStatus', () => {

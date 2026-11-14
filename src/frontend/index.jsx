@@ -8,7 +8,7 @@ import ForgeReconciler, {
   Text,
   Tooltip,
 } from '@forge/react';
-import { invoke, view } from '@forge/bridge';
+import { invoke } from '@forge/bridge';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -71,8 +71,6 @@ const getTooltipContent = (status, changedAt) => {
 };
 
 const App = () => {
-  const [contentId, setContentId] = useState(null);
-  const [localId, setLocalId] = useState(null);
   const [selectedStatusKey, setSelectedStatusKey] = useState('readyForAcceptanceTest');
   const [statusChangedAt, setStatusChangedAt] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -83,28 +81,9 @@ const App = () => {
   useEffect(() => {
     const loadStatus = async () => {
       try {
-        const context = await view.getContext();
-        const pageId =
-          context?.extension?.content?.id ||
-          context?.content?.id ||
-          context?.extension?.context?.contentId;
-        const macroLocalId = context?.localId;
-
-        if (!pageId) {
-          throw new Error('Unable to resolve Confluence page ID from macro context.');
-        }
-
-        if (!macroLocalId) {
-          throw new Error('Unable to resolve macro instance ID from Forge context.');
-        }
-
-        setContentId(pageId);
-        setLocalId(macroLocalId);
-
-        const savedState = await invoke('getStatus', {
-          contentId: pageId,
-          localId: macroLocalId,
-        });
+        // The resolver reads the page and macro IDs from the Forge context
+        // itself, so there is nothing to send.
+        const savedState = await invoke('getStatus');
         setSelectedStatusKey(savedState.status || 'readyForAcceptanceTest');
         setStatusChangedAt(savedState.statusChangedAt || null);
       } catch (loadError) {
@@ -127,7 +106,7 @@ const App = () => {
   }, []);
 
   const onStatusChange = async (nextStatus) => {
-    if (!nextStatus || !contentId || !localId || nextStatus === selectedStatusKey || isSaving) {
+    if (!nextStatus || nextStatus === selectedStatusKey || isSaving) {
       setIsOpen(false);
       return;
     }
@@ -143,11 +122,7 @@ const App = () => {
     setIsOpen(false);
 
     try {
-      const updatedState = await invoke('setStatus', {
-        contentId,
-        localId,
-        status: nextStatus,
-      });
+      const updatedState = await invoke('setStatus', { status: nextStatus });
 
       setSelectedStatusKey(updatedState.status || nextStatus);
       setStatusChangedAt(updatedState.statusChangedAt || null);
@@ -189,7 +164,7 @@ const App = () => {
               {...triggerProps}
               appearance="subtle"
               spacing="none"
-              isDisabled={isSaving || !contentId || !localId}
+              isDisabled={isSaving}
               onClick={() => setIsOpen((open) => !open)}
               aria-label={`Status: ${selectedStatus.label}. Click to change.`}
             >
