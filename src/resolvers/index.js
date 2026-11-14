@@ -77,7 +77,8 @@ const findProperty = async (contentId, key) => {
   return match || null;
 };
 
-resolver.define('getStatus', async (req) => {
+// The handlers are exported so the unit tests can call them directly.
+export const getStatus = async (req) => {
   const contentId = req.payload?.contentId;
   const localId = req.payload?.localId;
   const accountId = req.context?.accountId;
@@ -143,9 +144,9 @@ resolver.define('getStatus', async (req) => {
   }
 
   return toStatusPayload(property.value);
-});
+};
 
-resolver.define('setStatus', async (req) => {
+export const setStatus = async (req) => {
   const contentId = req.payload?.contentId;
   const localId = req.payload?.localId;
   const status = req.payload?.status;
@@ -214,6 +215,9 @@ resolver.define('setStatus', async (req) => {
   }
 
   return { status, statusChangedAt };
-});
+};
+
+resolver.define('getStatus', getStatus);
+resolver.define('setStatus', setStatus);
 
 export const handler = resolver.getDefinitions();
