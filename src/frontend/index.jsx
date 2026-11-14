@@ -89,6 +89,8 @@ const App = () => {
   const [statusChangedAt, setStatusChangedAt] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
+  // Counts load attempts; bumping it makes the effect below load again.
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [error, setError] = useState('');
@@ -101,6 +103,8 @@ const App = () => {
         const savedState = await invoke('getStatus');
         setSelectedStatusKey(savedState.status || 'readyForAcceptanceTest');
         setStatusChangedAt(savedState.statusChangedAt || null);
+        setLoadFailed(false);
+        setError('');
       } catch (loadError) {
         // Don't fall back to the default status here: readers would take it
         // for the saved one, and editors could overwrite a status they never
@@ -118,7 +122,12 @@ const App = () => {
     };
 
     loadStatus();
-  }, []);
+  }, [loadAttempt]);
+
+  const retryLoading = () => {
+    setIsLoading(true);
+    setLoadAttempt((attempt) => attempt + 1);
+  };
 
   const onStatusChange = async (nextStatus) => {
     if (!nextStatus || nextStatus === selectedStatusKey || isSaving) {
@@ -161,13 +170,16 @@ const App = () => {
   }
 
   if (loadFailed) {
-    // Deliberately not a button: nothing can be changed until the saved
-    // status is known. Reloading the page tries again.
+    // No status picker until the saved status is known. The lozenge is still
+    // a button, so keyboard and screen reader users can reach the reason in
+    // the tooltip, and clicking it loads the status again.
     return (
-      <Tooltip content={error} position="mouse">
-        <Lozenge appearance="default" isBold>
-          STATUS UNAVAILABLE
-        </Lozenge>
+      <Tooltip content={`${error} Click to try again.`} position="mouse">
+        <Button appearance="subtle" spacing="none" onClick={retryLoading}>
+          <Lozenge appearance="default" isBold>
+            STATUS UNAVAILABLE
+          </Lozenge>
+        </Button>
       </Tooltip>
     );
   }

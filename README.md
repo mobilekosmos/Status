@@ -10,7 +10,7 @@ Users click the lozenge to open a compact picker and select one of these states:
 - ACCEPTED FOR RELEASE
 
 The selected value is saved as a content property of the page or blog post, one per macro instance.
-The tooltip shows since when the status applies. If the status can't be loaded, the macro shows STATUS UNAVAILABLE and gives the reason in its tooltip.
+The tooltip shows since when the status applies. If the status can't be loaded, the macro shows STATUS UNAVAILABLE with the reason in its tooltip; clicking it tries again.
 
 ## What Is Implemented
 

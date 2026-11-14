@@ -73,9 +73,25 @@ describe('Status macro', () => {
     const root = await renderMacro();
 
     expect(lozengeTexts(root)).toEqual(['STATUS UNAVAILABLE']);
-    expect(tooltip(root)).toBe('Could not load the status.');
-    // Nothing can be changed while the saved status is unknown.
-    expect(clickableButtons(root)).toHaveLength(0);
+    expect(tooltip(root)).toBe('Could not load the status. Click to try again.');
+    // No status picker while the saved status is unknown.
+    expect(root.findAll((node) => node.type === 'Popup')).toHaveLength(0);
+  });
+
+  it('loads the status again when STATUS UNAVAILABLE is clicked', async () => {
+    let confluenceIsBack = false;
+    bridge.invoke.mockImplementation(async () => {
+      if (!confluenceIsBack) throw new Error('Could not load the status.');
+      return saved;
+    });
+    const root = await renderMacro();
+    expect(lozengeTexts(root)).toEqual(['STATUS UNAVAILABLE']);
+
+    confluenceIsBack = true;
+    // The lozenge is a real button, so keyboard users can reach it as well.
+    await act(async () => clickableButtons(root)[0].props.onClick());
+
+    expect(lozengeTexts(root)).toEqual(['NOT ACCEPTED']);
   });
 
   it("hides @forge/bridge's consent diagnostic behind a readable message", async () => {
@@ -83,7 +99,7 @@ describe('Status macro', () => {
 
     const root = await renderMacro();
 
-    expect(tooltip(root)).toBe('Could not load the status.');
+    expect(tooltip(root)).toBe('Could not load the status. Click to try again.');
   });
 
   it('gives the status picker an accessible name', async () => {
