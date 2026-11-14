@@ -134,7 +134,7 @@ resolver.define('getStatus', async (req) => {
           return toStatusPayload(concurrentProperty.value);
         }
       }
-    } catch (error) {
+    } catch {
       // If initialization fails (for example, read-only users), fall back to
       // the default payload so viewing still works.
     }
