@@ -70,10 +70,25 @@ const getTooltipContent = (status, changedAt) => {
   return `${status.label} since ${formatDate(changedAt)} — ${daysInState} ${dayText} in this state`;
 };
 
+// @forge/bridge does not always reject with an Error instance (see the
+// consent note in loadStatus below), so never assume `.message` exists.
+// Its "Expected reject to be called with Error" diagnostic means nothing to
+// readers, so the fallback text is shown instead.
+const getErrorMessage = (error, fallback) => {
+  const message = typeof error?.message === 'string' ? error.message : '';
+
+  if (!message || message.includes('Expected reject to be called with Error')) {
+    return fallback;
+  }
+
+  return message;
+};
+
 const App = () => {
   const [selectedStatusKey, setSelectedStatusKey] = useState('readyForAcceptanceTest');
   const [statusChangedAt, setStatusChangedAt] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [error, setError] = useState('');
@@ -87,16 +102,16 @@ const App = () => {
         setSelectedStatusKey(savedState.status || 'readyForAcceptanceTest');
         setStatusChangedAt(savedState.statusChangedAt || null);
       } catch (loadError) {
+        // Don't fall back to the default status here: readers would take it
+        // for the saved one, and editors could overwrite a status they never
+        // saw. The macro shows "STATUS UNAVAILABLE" instead.
+        //
         // When the user has not yet clicked "Allow access" on the Forge
         // consent banner, the resolver promise rejects without a proper
-        // Error instance. @forge/bridge surfaces that as a confusing
-        // "Expected reject to be called with Error" diagnostic. We swallow
-        // those pre-consent rejections so only real failures are shown.
-        const message =
-          loadError && typeof loadError.message === 'string' ? loadError.message : '';
-        if (message && !message.includes('Expected reject to be called with Error')) {
-          setError(message);
-        }
+        // Error instance; getErrorMessage hides the confusing diagnostic
+        // @forge/bridge creates for that.
+        setLoadFailed(true);
+        setError(getErrorMessage(loadError, 'Could not load the status.'));
       } finally {
         setIsLoading(false);
       }
@@ -129,7 +144,7 @@ const App = () => {
     } catch (saveError) {
       setSelectedStatusKey(previousStatus);
       setStatusChangedAt(previousChangedAt);
-      setError(saveError.message || 'Failed to save status.');
+      setError(getErrorMessage(saveError, 'Could not save the status.'));
     } finally {
       setIsSaving(false);
     }
@@ -142,6 +157,18 @@ const App = () => {
       <Button appearance="subtle" spacing="none" isDisabled>
         <Lozenge appearance="new">LOADING STATUS...</Lozenge>
       </Button>
+    );
+  }
+
+  if (loadFailed) {
+    // Deliberately not a button: nothing can be changed until the saved
+    // status is known. Reloading the page tries again.
+    return (
+      <Tooltip content={error} position="mouse">
+        <Lozenge appearance="default" isBold>
+          STATUS UNAVAILABLE
+        </Lozenge>
+      </Tooltip>
     );
   }
 
