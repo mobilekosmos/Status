@@ -50,3 +50,7 @@ Thumbs.db
 
 
 /.forge/
+
+# Local Forge skills checkout used by AI coding tools. It is its own Git
+# repository, so tracking it here only creates a broken submodule entry.
+/.forge-skills/
