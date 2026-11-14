@@ -30,11 +30,16 @@ const jsonResponse = (status, body = {}) => ({
 
 // Scripts a fake Confluence: permission checks answer according to canRead /
 // canUpdate, and the property list returns `property` (or nothing).
-const fakeConfluence = ({ canRead = true, canUpdate = true, property = null } = {}) => {
+// `respond(method, path)` can replace the answer to specific requests.
+const fakeConfluence = ({ canRead = true, canUpdate = true, property = null, respond } = {}) => {
   requestConfluence.mockImplementation(async (url, init = {}) => {
     const path = url.value;
     const method = init.method ?? 'GET';
 
+    const customResponse = respond?.(method, path);
+    if (customResponse) {
+      return customResponse;
+    }
     if (path.endsWith('/permission/check')) {
       const { operation } = JSON.parse(init.body);
       return jsonResponse(200, { hasPermission: operation === 'read' ? canRead : canUpdate });
@@ -77,14 +82,19 @@ const request = (payload = {}, context = {}) => ({
   },
 });
 
+let consoleError;
+
 beforeEach(() => {
   requestConfluence.mockReset();
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(NOW));
+  // Keep the test output clean; tests that expect logging assert on it.
+  consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 });
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe('page and macro IDs', () => {
@@ -190,6 +200,8 @@ describe('getStatus', () => {
       statusChangedAt: null,
     });
     expect(writeRequests()).toHaveLength(0);
+    // Read-only viewers are normal, not an error worth logging.
+    expect(consoleError).not.toHaveBeenCalled();
   });
 
   it('refuses users who cannot view the page', async () => {
@@ -255,5 +267,52 @@ describe('setStatus', () => {
     expect(writes).toHaveLength(1);
     expect(writes[0][1].method).toBe('POST');
     expect(writes[0][0].value).toBe(`/wiki/api/v2/pages/${PAGE_ID}/properties`);
+  });
+});
+
+describe('failed Confluence requests', () => {
+  it('pass on a short message and log what Confluence answered', async () => {
+    fakeConfluence({
+      respond: (method, path) =>
+        path.includes('/properties?key=') ? jsonResponse(500, { message: 'Database on fire' }) : undefined,
+    });
+
+    const error = await getStatus(request()).catch((caught) => caught);
+
+    expect(error.message).toBe('Could not load the status.');
+    expect(consoleError).toHaveBeenCalledWith(expect.stringMatching(/HTTP 500.*Database on fire/));
+  });
+
+  it('pass on a short message when saving fails', async () => {
+    fakeConfluence({
+      property: savedProperty({ status: 'readyForAcceptanceTest', statusChangedAt: '2026-11-01T08:00:00.000Z' }),
+      respond: (method) => (method === 'PUT' ? jsonResponse(409, { message: 'Version conflict' }) : undefined),
+    });
+
+    await expect(setStatus(request({ status: 'notAccepted' }))).rejects.toThrow(/^Could not save the status\.$/);
+    expect(consoleError).toHaveBeenCalledWith(expect.stringMatching(/HTTP 409.*Version conflict/));
+  });
+
+  it('pass on "Could not save" when the lookup during a save fails', async () => {
+    fakeConfluence({
+      respond: (method, path) =>
+        path.includes('/properties?key=') ? jsonResponse(503, { message: 'Try again later' }) : undefined,
+    });
+
+    await expect(setStatus(request({ status: 'notAccepted' }))).rejects.toThrow(/^Could not save the status\.$/);
+  });
+
+  it('do not break the first view when saving the default status fails', async () => {
+    fakeConfluence({
+      property: null,
+      respond: (method, path) =>
+        method === 'POST' && path.endsWith('/properties') ? jsonResponse(400, { message: 'Bad key' }) : undefined,
+    });
+
+    await expect(getStatus(request())).resolves.toEqual({
+      status: 'readyForAcceptanceTest',
+      statusChangedAt: null,
+    });
+    expect(consoleError).toHaveBeenCalledWith(expect.stringMatching(/initial status.*HTTP 400.*Bad key/));
   });
 });

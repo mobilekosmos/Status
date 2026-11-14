@@ -64,10 +64,22 @@ const getMacroContext = (context) => {
   return { contentId: content.id, localId, routes };
 };
 
+// Confluence's error body only helps when debugging, so it goes to the app
+// logs (`forge logs`). Users get a short message instead of raw JSON.
+const logFailedResponse = async (response, message) => {
+  const details = await response.text();
+  console.error(`${message} Confluence answered HTTP ${response.status}: ${details}`);
+};
+
+const requestFailed = async (response, message) => {
+  await logFailedResponse(response, message);
+  return new Error(message);
+};
+
 // We keep all data calls on asApp for better UX (no repeated user-consent
 // prompts), then explicitly verify the acting user's permissions using the
 // product permission API before reads/writes.
-const checkUserContentPermission = async ({ contentId, accountId, operation, errorMessage }) => {
+const hasContentPermission = async ({ contentId, accountId, operation }) => {
   if (!accountId) {
     throw new Error('Missing user accountId in resolver context.');
   }
@@ -90,12 +102,15 @@ const checkUserContentPermission = async ({ contentId, accountId, operation, err
     });
 
   if (!response.ok) {
-    const details = await response.text();
-    throw new Error(`Failed to verify content permission: ${response.status} ${details}`);
+    throw await requestFailed(response, 'Could not check your permissions for this page.');
   }
 
   const result = await response.json();
-  if (!result?.hasPermission) {
+  return Boolean(result?.hasPermission);
+};
+
+const checkUserContentPermission = async ({ errorMessage, ...permission }) => {
+  if (!(await hasContentPermission(permission))) {
     throw new Error(errorMessage);
   }
 };
@@ -103,12 +118,12 @@ const checkUserContentPermission = async ({ contentId, accountId, operation, err
 // Look up an existing content property by key using the v2 API.
 // v2 returns a list; we match the requested key client-side. Returns the
 // property object (with id and version) or null when no property exists yet.
-const findProperty = async (routes, contentId, key) => {
+// `failureMessage` is what the user sees if Confluence can't answer.
+const findProperty = async (routes, contentId, key, failureMessage = 'Could not load the status.') => {
   const response = await api.asApp().requestConfluence(routes.list(contentId, key));
 
   if (!response.ok) {
-    const details = await response.text();
-    throw new Error(`Failed to list page properties: ${response.status} ${details}`);
+    throw await requestFailed(response, failureMessage);
   }
 
   const data = await response.json();
@@ -135,37 +150,39 @@ export const getStatus = async (req) => {
     const statusChangedAt = new Date().toISOString();
     const initialValue = { status: DEFAULT_STATUS, statusChangedAt };
 
+    // Save the default status on first view so its "since" date starts now.
+    // Only users who may edit the page can do that; everyone else simply
+    // sees the default. Viewing must keep working even if saving fails, so
+    // failures are logged instead of passed on.
     try {
-      await checkUserContentPermission({
-        contentId,
-        accountId,
-        operation: 'update',
-        errorMessage: 'You do not have permission to initialize this page status.',
-      });
+      const canEdit = await hasContentPermission({ contentId, accountId, operation: 'update' });
 
-      const createResponse = await api.asApp().requestConfluence(routes.create(contentId), {
-        method: 'POST',
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ key, value: initialValue }),
-      });
+      if (canEdit) {
+        const createResponse = await api.asApp().requestConfluence(routes.create(contentId), {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ key, value: initialValue }),
+        });
 
-      if (createResponse.ok) {
-        return toStatusPayload(initialValue);
-      }
-
-      // A concurrent request may have already created the property.
-      if (createResponse.status === 409) {
-        const concurrentProperty = await findProperty(routes, contentId, key);
-        if (concurrentProperty) {
-          return toStatusPayload(concurrentProperty.value);
+        if (createResponse.ok) {
+          return toStatusPayload(initialValue);
         }
+
+        // A concurrent request may have already created the property.
+        if (createResponse.status === 409) {
+          const concurrentProperty = await findProperty(routes, contentId, key);
+          if (concurrentProperty) {
+            return toStatusPayload(concurrentProperty.value);
+          }
+        }
+
+        await logFailedResponse(createResponse, 'Could not save the initial status.');
       }
-    } catch {
-      // If initialization fails (for example, read-only users), fall back to
-      // the default payload so viewing still works.
+    } catch (error) {
+      console.error('Could not save the initial status.', error);
     }
 
     return toStatusPayload();
@@ -191,7 +208,7 @@ export const setStatus = async (req) => {
   });
 
   const key = getPropertyKey(localId);
-  const existing = await findProperty(routes, contentId, key);
+  const existing = await findProperty(routes, contentId, key, 'Could not save the status.');
 
   // Picking the status the macro already has must not reset its "since"
   // date. This happens when the page was opened before someone else changed
@@ -232,8 +249,7 @@ export const setStatus = async (req) => {
   }
 
   if (!response.ok) {
-    const details = await response.text();
-    throw new Error(`Failed to save status property: ${response.status} ${details}`);
+    throw await requestFailed(response, 'Could not save the status.');
   }
 
   return { status, statusChangedAt };
